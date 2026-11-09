@@ -1608,6 +1608,7 @@ def validate_id(*param_names_to_validate, raise_errors=False):
                     for item in target_items:
                         if not is_chat_allowed(item):
                             resolved_allowed = False
+                            unresolved_id = False
                             if isinstance(item, str) or (
                                 is_public_channels_mode() and isinstance(item, int)
                             ):
@@ -1618,9 +1619,16 @@ def validate_id(*param_names_to_validate, raise_errors=False):
                                         if is_chat_allowed(item, ent):
                                             resolved_allowed = True
                                 except Exception:
-                                    pass
+                                    unresolved_id = isinstance(item, int)
                             if not resolved_allowed:
                                 err = check_chat_access(item)
+                                if unresolved_id:
+                                    err += (
+                                        " The ID could not be resolved: this session has not "
+                                        "seen the chat yet (not joined or not among recent "
+                                        "dialogs). For a public channel, call once with its "
+                                        "@username; the ID works afterwards."
+                                    )
                                 return error_result(
                                     log_and_format_error(
                                         func.__name__,

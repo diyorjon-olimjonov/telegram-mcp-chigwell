@@ -235,3 +235,22 @@ def test_missing_env_file_fails_loudly(tmp_path):
     result = _import_runtime(env, tmp_path)
     assert result.returncode == 1
     assert "TELEGRAM_ENV_FILE does not exist" in result.stderr
+
+
+@pytest.mark.asyncio
+async def test_unresolvable_numeric_id_suggests_username(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_ALLOW_PUBLIC_CHANNELS", "1")
+
+    async def fail_resolve(identifier, client):
+        raise ValueError("Could not find the input entity")
+
+    monkeypatch.setattr(runtime, "get_client", lambda account=None: object())
+    monkeypatch.setattr(runtime, "resolve_entity", fail_resolve)
+
+    @validate_id("chat_id")
+    async def read(chat_id: Union[int, str], account: Optional[str] = None):
+        return f"read:{chat_id}"
+
+    result = str(await read(chat_id=-1001105395001))
+    assert "restricted by privacy policy" in result
+    assert "@username" in result
