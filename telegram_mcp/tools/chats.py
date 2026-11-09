@@ -170,7 +170,7 @@ async def get_chats(account: Optional[str] = None, page: int = 1, page_size: int
         cl = get_client(account)
         await ensure_connected(cl)
         try:
-            dialogs = await cl.get_dialogs()
+            dialogs = await get_dialogs_capped(cl)
         except BotMethodInvalidError:
             return (
                 "Listing chats/dialogs is not supported for bot accounts "

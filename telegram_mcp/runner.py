@@ -258,7 +258,7 @@ async def _main() -> None:
         async def _warm_caches() -> None:
             async def _warm_client(label: str, cl: TelegramClient) -> None:
                 try:
-                    await cl.get_dialogs()
+                    await get_dialogs_capped(cl)
                 except BotMethodInvalidError:
                     print(
                         f"Skipping entity cache pre-warm for bot client "

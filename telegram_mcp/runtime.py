@@ -171,7 +171,25 @@ def _require_api_credentials() -> tuple[int, str]:
         sys.exit(1)
 
 
-load_dotenv()
+def _load_env_files() -> None:
+    """Load settings from TELEGRAM_ENV_FILE (fork patch), then from the usual .env.
+
+    An installed tool has no project .env next to it. TELEGRAM_ENV_FILE names a
+    private dotenv file so an MCP client config can carry this one path instead
+    of the API hash and session settings. Variables already in the environment
+    always win, and the explicit file wins over a discovered .env.
+    """
+    env_file = os.getenv("TELEGRAM_ENV_FILE", "").strip()
+    if env_file:
+        path = os.path.expanduser(env_file)
+        if not os.path.isfile(path):
+            print(f"Error: TELEGRAM_ENV_FILE does not exist: {path}", file=sys.stderr)
+            sys.exit(1)
+        load_dotenv(path, override=False)
+    load_dotenv()
+
+
+_load_env_files()
 
 TELEGRAM_API_ID, TELEGRAM_API_HASH = _require_api_credentials()
 
@@ -670,6 +688,36 @@ def _get_flood_sleep_threshold() -> int:
     except ValueError:
         logger.warning("Invalid TELEGRAM_FLOOD_SLEEP_THRESHOLD; falling back to default 60s")
         return 60
+
+
+MAX_DIALOGS_DEFAULT = 300
+
+
+def max_dialogs_limit(value: Optional[str] = None) -> Optional[int]:
+    """Cap for full dialog scans, from TELEGRAM_MAX_DIALOGS (fork patch).
+
+    Telegram rate-limits GetDialogsRequest hard on accounts with thousands of
+    chats: an uncapped get_dialogs() sleeps through flood waits and MCP calls
+    time out. Dialogs come back pinned first, then by recent activity, so a cap
+    keeps the chats that matter. Default 300; 0, "none" or "all" = no cap.
+    """
+    raw = os.getenv("TELEGRAM_MAX_DIALOGS") if value is None else value
+    if raw is None or not raw.strip():
+        return MAX_DIALOGS_DEFAULT
+    raw = raw.strip().lower()
+    if raw in {"0", "none", "all", "unlimited"}:
+        return None
+    try:
+        limit = int(raw)
+    except ValueError:
+        logger.warning("Invalid TELEGRAM_MAX_DIALOGS; falling back to default 300")
+        return MAX_DIALOGS_DEFAULT
+    return limit if limit > 0 else None
+
+
+async def get_dialogs_capped(client: Any, **kwargs: Any) -> Any:
+    """Telethon get_dialogs, limited by TELEGRAM_MAX_DIALOGS."""
+    return await client.get_dialogs(limit=max_dialogs_limit(), **kwargs)
 
 
 def _resolve_session_path(session_name: str) -> str:
@@ -1220,9 +1268,34 @@ def get_effective_allowed_chat_ids() -> Optional[set[Union[int, str]]]:
     return ALLOWED_CHAT_IDS
 
 
+def is_public_channels_mode() -> bool:
+    """Return True if TELEGRAM_ALLOW_PUBLIC_CHANNELS is on (fork patch).
+
+    Public mode turns the allowlist on even when TELEGRAM_ALLOWED_CHAT_IDS is
+    empty: public broadcast channels are readable, every other chat (private
+    chats, bots, groups, supergroups, private channels) needs an explicit
+    TELEGRAM_ALLOWED_CHAT_IDS entry.
+    """
+    return os.getenv("TELEGRAM_ALLOW_PUBLIC_CHANNELS", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def is_public_broadcast_channel(entity: Any) -> bool:
+    """True for a broadcast channel that has a public @username (not a group)."""
+    if not isinstance(entity, types.Channel) or not getattr(entity, "broadcast", False):
+        return False
+    if getattr(entity, "username", None):
+        return True
+    return any(getattr(u, "active", False) for u in (getattr(entity, "usernames", None) or []))
+
+
 def is_chat_allowlist_enabled() -> bool:
     """Return True if chat allowlist filtering is active."""
-    return get_effective_allowed_chat_ids() is not None
+    return get_effective_allowed_chat_ids() is not None or is_public_channels_mode()
 
 
 def is_chat_allowed(chat_identifier: Any, entity: Any = None) -> bool:
@@ -1237,7 +1310,9 @@ def is_chat_allowed(chat_identifier: Any, entity: Any = None) -> bool:
     """
     allowed = get_effective_allowed_chat_ids()
     if allowed is None:
-        return True
+        if not is_public_channels_mode():
+            return True
+        allowed = set()
 
     if chat_identifier is not None and not isinstance(chat_identifier, bool):
         if isinstance(chat_identifier, int):
@@ -1265,15 +1340,20 @@ def is_chat_allowed(chat_identifier: Any, entity: Any = None) -> bool:
         if username and str(username).lower() in allowed:
             return True
 
+        if is_public_channels_mode() and is_public_broadcast_channel(entity):
+            return True
+
     return False
 
 
 def check_chat_access(chat_identifier: Any, entity: Any = None) -> Optional[str]:
     """Return an error message if chat access is restricted, or None if allowed."""
     if not is_chat_allowed(chat_identifier, entity):
-        return (
-            f"Access to chat '{chat_identifier}' is restricted by privacy policy "
-            "(TELEGRAM_ALLOWED_CHAT_IDS)."
+        return f"Access to chat '{chat_identifier}' is restricted by privacy policy " + (
+            "(TELEGRAM_ALLOW_PUBLIC_CHANNELS: only public channels and "
+            "TELEGRAM_ALLOWED_CHAT_IDS are readable)."
+            if is_public_channels_mode()
+            else "(TELEGRAM_ALLOWED_CHAT_IDS)."
         )
     return None
 
@@ -1528,7 +1608,10 @@ def validate_id(*param_names_to_validate, raise_errors=False):
                     for item in target_items:
                         if not is_chat_allowed(item):
                             resolved_allowed = False
-                            if isinstance(item, str):
+                            unresolved_id = False
+                            if isinstance(item, str) or (
+                                is_public_channels_mode() and isinstance(item, int)
+                            ):
                                 try:
                                     cl = get_client(kwargs.get("account"))
                                     if cl:
@@ -1536,9 +1619,16 @@ def validate_id(*param_names_to_validate, raise_errors=False):
                                         if is_chat_allowed(item, ent):
                                             resolved_allowed = True
                                 except Exception:
-                                    pass
+                                    unresolved_id = isinstance(item, int)
                             if not resolved_allowed:
                                 err = check_chat_access(item)
+                                if unresolved_id:
+                                    err += (
+                                        " The ID could not be resolved: this session has not "
+                                        "seen the chat yet (not joined or not among recent "
+                                        "dialogs). For a public channel, call once with its "
+                                        "@username; the ID works afterwards."
+                                    )
                                 return error_result(
                                     log_and_format_error(
                                         func.__name__,
@@ -2168,7 +2258,7 @@ async def _resolve_with_retries(
         except ValueError as error:
             last_error = error
             try:
-                await client.get_dialogs()
+                await get_dialogs_capped(client)
             except (BotMethodInvalidError, Exception):
                 pass
             try:
@@ -2182,7 +2272,7 @@ async def _resolve_with_retries(
         except ValueError as error:
             last_error = error
             try:
-                await client.get_dialogs()
+                await get_dialogs_capped(client)
             except (BotMethodInvalidError, Exception):
                 pass
             try:

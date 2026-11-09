@@ -160,7 +160,7 @@ async def get_direct_chat_by_contact(contact_query: str, account: Optional[str] 
         # If we found contacts, look for direct chats with them
         records = []
         try:
-            dialogs = await cl.get_dialogs()
+            dialogs = await get_dialogs_capped(cl)
         except BotMethodInvalidError:
             dialogs = []
         for contact in found_contacts:
@@ -211,7 +211,7 @@ async def get_contact_chats(contact_id: Union[int, str], account: Optional[str] 
 
         # Find direct chat
         try:
-            dialogs = await cl.get_dialogs()
+            dialogs = await get_dialogs_capped(cl)
         except BotMethodInvalidError:
             dialogs = []
 
