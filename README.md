@@ -9,6 +9,19 @@
 
 A Telegram integration for Claude, Cursor, and other MCP-compatible clients. It exposes Telegram account, chat, message, contact, media, folder, and admin operations through the [Model Context Protocol](https://modelcontextprotocol.io/) using [Telethon](https://docs.telethon.dev/).
 
+
+> **Fork note — `diyorjon-olimjonov/telegram-mcp-chigwell`.** This fork tracks
+> [chigwell/telegram-mcp](https://github.com/chigwell/telegram-mcp) and adds three small,
+> environment-driven patches (all off or upstream-compatible unless set):
+>
+> | Variable | Effect |
+> |---|---|
+> | `TELEGRAM_MAX_DIALOGS` | Caps every full dialog scan (cache warm-up, `get_chats`, contact lookups). Default **300** (pinned first, then most recently active); `0`/`all` = no cap. Avoids `GetDialogsRequest` flood waits and tool timeouts on large accounts. |
+> | `TELEGRAM_ALLOW_PUBLIC_CHANNELS=1` | Turns the chat allowlist on: public (`@username`) **broadcast channels** are readable; private chats, bots, groups, supergroups and private channels are denied unless listed in `TELEGRAM_ALLOWED_CHAT_IDS`. |
+> | `TELEGRAM_ENV_FILE` | Loads settings from this private dotenv file (process environment still wins), so an MCP client config can hold one path instead of the API hash and session settings. |
+>
+> Install: `uv tool install --python 3.12 "git+https://github.com/diyorjon-olimjonov/telegram-mcp-chigwell@main"`
+
 ## 🤖 MCP in Action
 
 Basic Telegram MCP usage in Claude:

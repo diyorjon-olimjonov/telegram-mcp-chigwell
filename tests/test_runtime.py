@@ -973,7 +973,7 @@ class _ResolvingClient:
         self.dialogs_loaded = 0
         self.calls = []
 
-    async def get_dialogs(self):
+    async def get_dialogs(self, *args, **kwargs):
         self.dialogs_loaded += 1
 
     async def get_entity(self, identifier):
