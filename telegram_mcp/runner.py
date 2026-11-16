@@ -230,7 +230,14 @@ async def _serve(transport: str) -> None:
     """
     if transport in ("http", "sse"):
         mcp.settings.host = os.getenv("MCP_HOST", "127.0.0.1")
-        mcp.settings.port = int(os.getenv("MCP_PORT", "8765"))
+        # PORT is what Railway/Render/Heroku-style hosts inject.
+        mcp.settings.port = int(os.getenv("MCP_PORT") or os.getenv("PORT") or "8765")
+        # Optional secret URL path, e.g. MCP_HTTP_PATH=<random>/mcp. The HTTP
+        # transport has no auth of its own; on a public host an unguessable
+        # path keeps strangers out (requests elsewhere get 404).
+        http_path = os.getenv("MCP_HTTP_PATH", "").strip().strip("/")
+        if http_path:
+            mcp.settings.streamable_http_path = "/" + http_path
         _configure_transport_security()
         if transport == "http":
             await mcp.run_streamable_http_async()
@@ -291,7 +298,7 @@ async def _main() -> None:
         # Startup log with host:port for HTTP/SSE transports
         if transport in ("http", "sse"):
             host = os.getenv("MCP_HOST", "127.0.0.1")
-            port = os.getenv("MCP_PORT", "8765")
+            port = os.getenv("MCP_PORT") or os.getenv("PORT") or "8765"
             print(
                 f"Telegram client(s) started ({labels}). Running MCP server "
                 f"({transport}) on {host}:{port}...",

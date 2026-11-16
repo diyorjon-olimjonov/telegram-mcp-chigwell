@@ -718,3 +718,46 @@ async def test_main_serves_labelled_accounts_when_preset_default_is_not_logged_i
     assert list(accounts) == ["work"]
     assert "Skipping account 'default'" in err
     assert "Telegram client(s) started (work)." in err
+
+
+@pytest.fixture
+def _http_serve(monkeypatch):
+    """Run ``_serve("http")`` with the server start mocked out (no network)."""
+    from unittest.mock import AsyncMock
+
+    settings = runner.mcp.settings
+    for name in ("host", "port", "streamable_http_path", "transport_security"):
+        monkeypatch.setattr(settings, name, getattr(settings, name))
+    for name in ("MCP_HOST", "MCP_PORT", "PORT", "MCP_HTTP_PATH", "MCP_ALLOWED_HOSTS"):
+        monkeypatch.delenv(name, raising=False)
+    start = AsyncMock()
+    monkeypatch.setattr(runner.mcp, "run_streamable_http_async", start)
+
+    def serve():
+        asyncio.run(runner._serve("http"))
+        start.assert_awaited_once()
+        return settings
+
+    return serve
+
+
+def test_serve_uses_platform_port_when_mcp_port_unset(_http_serve, monkeypatch):
+    monkeypatch.setenv("PORT", "4321")
+    assert _http_serve().port == 4321
+
+
+def test_serve_mcp_port_wins_over_platform_port(_http_serve, monkeypatch):
+    monkeypatch.setenv("PORT", "4321")
+    monkeypatch.setenv("MCP_PORT", "9000")
+    assert _http_serve().port == 9000
+
+
+def test_serve_normalizes_secret_http_path(_http_serve, monkeypatch):
+    monkeypatch.setenv("MCP_HTTP_PATH", "/abc/mcp/")
+    assert _http_serve().streamable_http_path == "/abc/mcp"
+
+
+def test_serve_keeps_default_http_path_when_unset(_http_serve):
+    settings = _http_serve()
+    assert settings.streamable_http_path == "/mcp"
+    assert settings.port == 8765

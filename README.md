@@ -942,6 +942,36 @@ setups.
 
 For multiple accounts, pass variables such as `TELEGRAM_SESSION_STRING_WORK` and `TELEGRAM_SESSION_STRING_PERSONAL`.
 
+### Deploy on Railway
+
+Railway builds the `Dockerfile` and runs the server publicly over streamable
+HTTP. The HTTP transport has no authentication, so the endpoint lives on a
+secret, unguessable path (generate one with `openssl rand -hex 16`) and only
+read-only tools are exposed. Set these service variables:
+
+```bash
+MCP_TRANSPORT=http
+MCP_HOST=0.0.0.0
+MCP_PORT=8080
+MCP_HTTP_PATH=<random hex>/mcp
+MCP_ALLOWED_HOSTS=<your-app>.up.railway.app
+TELEGRAM_EXPOSED_TOOLS=read-only
+TELEGRAM_ALLOW_PUBLIC_CHANNELS=1
+TELEGRAM_MAX_DIALOGS=300
+# Secrets: set them in Railway's Variables tab only, never commit them.
+TELEGRAM_API_ID=...
+TELEGRAM_API_HASH=...
+TELEGRAM_SESSION_STRING=...
+```
+
+Without `MCP_PORT`, the server listens on the `PORT` variable Railway injects.
+If you set `MCP_PORT`, point the Railway domain's target port at it.
+`MCP_HTTP_PATH` only applies to `MCP_TRANSPORT=http` (not `sse`). Requests to
+any other path get a 404, and the server never logs the path.
+
+The connector URL is `https://<your-app>.up.railway.app/<random hex>/mcp`.
+Treat it like a password.
+
 ## Development
 
 The implementation is split into a small compatibility entrypoint and modular package code:
