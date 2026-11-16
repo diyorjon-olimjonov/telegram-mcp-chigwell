@@ -945,19 +945,26 @@ For multiple accounts, pass variables such as `TELEGRAM_SESSION_STRING_WORK` and
 ### Deploy on Railway
 
 Railway builds the `Dockerfile` and runs the server publicly over streamable
-HTTP. The HTTP transport has no authentication, so the endpoint lives on a
-secret, unguessable path (generate one with `openssl rand -hex 16`) and only
-read-only tools are exposed. Set these service variables:
+HTTP, so one shared Telegram account can serve several people, each connecting
+from Claude as a custom connector. Access is protected by OAuth: every person
+(advisor) signs in once with a personal access code that you issue and can
+revoke individually. The endpoint also lives on a secret path, and only read-only
+tools are exposed. Set these service variables:
 
 ```bash
 MCP_TRANSPORT=http
 MCP_HOST=0.0.0.0
 MCP_PORT=8080
-MCP_HTTP_PATH=<random hex>/mcp
+MCP_HTTP_PATH=<random hex>/mcp          # openssl rand -hex 16
 MCP_ALLOWED_HOSTS=<your-app>.up.railway.app
 TELEGRAM_EXPOSED_TOOLS=read-only
 TELEGRAM_ALLOW_PUBLIC_CHANNELS=1
 TELEGRAM_MAX_DIALOGS=300
+# OAuth login
+MCP_AUTH=1
+MCP_AUTH_ISSUER_URL=https://<your-app>.up.railway.app
+MCP_AUTH_SECRET=...                     # openssl rand -hex 32
+MCP_ACCESS_CODES=fargona_sh:<sha256hex>,toshkent_sh:<sha256hex>
 # Secrets: set them in Railway's Variables tab only, never commit them.
 TELEGRAM_API_ID=...
 TELEGRAM_API_HASH=...
@@ -967,10 +974,45 @@ TELEGRAM_SESSION_STRING=...
 Without `MCP_PORT`, the server listens on the `PORT` variable Railway injects.
 If you set `MCP_PORT`, point the Railway domain's target port at it.
 `MCP_HTTP_PATH` only applies to `MCP_TRANSPORT=http` (not `sse`). Requests to
-any other path get a 404, and the server never logs the path.
+any other path get a 404, and the server never logs the path. With `MCP_AUTH=1`
+the server refuses to start until `MCP_AUTH_SECRET` (at least 32 bytes),
+`MCP_AUTH_ISSUER_URL` and `MCP_ACCESS_CODES` are all set.
 
 The connector URL is `https://<your-app>.up.railway.app/<random hex>/mcp`.
-Treat it like a password.
+
+#### Issuing and revoking access codes
+
+```bash
+uv run python tools/make_access_code.py fargona_sh
+```
+
+The script prints the code once (for example `k7mq-x3ta-9dwe-hp2r`) and the
+`fargona_sh:<sha256hex>` entry. Give the code to the advisor privately, append the
+entry to `MCP_ACCESS_CODES` (comma-separated), and redeploy. Only the hash is stored
+on the server; the code itself is never written to disk.
+
+- **Revoke one advisor:** delete their entry from `MCP_ACCESS_CODES` and redeploy.
+  Their tokens stop working at the next request; nobody else is affected.
+- **Replace a lost code:** run the script again for the same name and swap the entry.
+  The old code and every token issued with it stop working.
+- **Sign everyone out:** change `MCP_AUTH_SECRET`.
+
+Logins and tool calls are logged to stderr (Railway's log view) as one line each,
+for example `access tool_call advisor=fargona_sh tool=list_messages`, without
+arguments, message content, codes or tokens.
+
+Sign-ins survive restarts and redeploys: registrations and tokens are signed with
+`MCP_AUTH_SECRET` rather than stored. Access tokens last one hour
+(`MCP_ACCESS_TOKEN_TTL`) and are refreshed automatically for 30 days
+(`MCP_REFRESH_TOKEN_TTL`).
+
+#### What the advisor does
+
+1. In Claude: **Settings → Connectors → Add custom connector**.
+2. Paste the connector URL and click **Add**, then **Connect**.
+3. A page titled "Telegram monitoring — kirish" opens: type the access code into
+   **Kirish kodi** and press **Kirish**.
+4. Done. Claude can now use the Telegram tools; the login is remembered.
 
 ## Development
 
