@@ -17,6 +17,7 @@ if hasattr(sys.stderr, "reconfigure"):
     except Exception:
         pass
 
+from telegram_mcp import auth as _auth
 from telegram_mcp import runtime as _runtime
 from telegram_mcp import transcription as _transcription
 from telegram_mcp.runtime import *
@@ -238,6 +239,11 @@ async def _serve(transport: str) -> None:
         http_path = os.getenv("MCP_HTTP_PATH", "").strip().strip("/")
         if http_path:
             mcp.settings.streamable_http_path = "/" + http_path
+        # MCP_AUTH=1: OAuth login with per-advisor access codes (telegram_mcp/auth.py).
+        # Must come after the endpoint path is final: the OAuth resource URL and
+        # its metadata URL are derived from it.
+        if _auth.auth_enabled(transport):
+            _auth.install_auth(mcp, _auth.load_auth_config(), transport)
         _configure_transport_security()
         if transport == "http":
             await mcp.run_streamable_http_async()
@@ -343,6 +349,17 @@ async def _main() -> None:
         _session_locks.clear()
 
 
+def _validate_auth_config() -> None:
+    """Refuse to start an HTTP server with MCP_AUTH=1 and incomplete OAuth settings."""
+    transport = os.getenv("MCP_TRANSPORT", "stdio").lower()
+    if not _auth.auth_enabled(transport):
+        return
+    try:
+        _auth.load_auth_config()
+    except _auth.AuthConfigError as exc:
+        raise SystemExit(str(exc)) from None
+
+
 def main() -> None:
     _configure_allowed_roots_from_cli(sys.argv[1:])
     # Apply CLI transport/host/port overrides to environment (runtime sets globals)
@@ -379,6 +396,7 @@ def main() -> None:
         )
     _transcription.validate_transcription_config()
     _session_lock_shared()  # fail loudly at startup on a bad toggle
+    _validate_auth_config()  # before connecting to Telegram
     asyncio.run(_main())
 
 

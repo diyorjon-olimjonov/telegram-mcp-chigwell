@@ -8,6 +8,7 @@ from typing import Any, Optional
 from starlette.responses import JSONResponse, Response
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from telegram_mcp.auth import is_oauth_path
 from telegram_mcp.media_links import MEDIA_ROUTE_PREFIX, UPLOAD_ROUTE_PREFIX
 from telegram_mcp.transport.protocol import (
     DEFAULT_PROTOCOL_VERSION,
@@ -34,6 +35,10 @@ def _origin_matches(origin: str, allowed_origins: Any) -> bool:
             if port.isdigit():
                 return True
     return False
+
+
+def _auth_enabled(mcp_instance: Any) -> bool:
+    return getattr(getattr(mcp_instance, "settings", None), "auth", None) is not None
 
 
 def is_origin_allowed(origin: Optional[str], mcp_instance: Any = None) -> bool:
@@ -73,6 +78,14 @@ class ProtocolNegotiationMiddleware:
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        # With OAuth on, the authorization endpoints are plain HTTP, not MCP: no
+        # negotiation or discovery probe. Their CORS is the SDK's, and the login
+        # form carries its own CSRF token (its POST comes from this server's own
+        # origin, which the MCP Origin allowlist does not name).
+        if _auth_enabled(self.mcp_instance) and is_oauth_path(scope.get("path", "")):
             await self.app(scope, receive, send)
             return
 
